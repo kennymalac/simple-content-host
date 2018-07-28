@@ -27,60 +27,78 @@
 (defmacro send-json-response (res &key headers body other)
   `(let ((s (make-string-output-stream)))
      (yason:encode ,body s)
-     (send-response ,res :headers (append ,headers '(:content-type "application/json"))
+     (send-response ,res :headers (append ,headers '(:access-control-allow-origin "*" :content-type "application/json"))
                     :body (get-output-stream-string s)
                     ,@other)))
 
+(defroute (:options "/prepare-upload/") (req res)
+  (send-response res :headers '(:access-control-allow-origin "*" :access-control-allow-headers "X-Accept-Charset, X-Accept, Accept, Accept-Encoding, Authorization, Content-Type, Dnt, Origin, User-Agent, X-Requested-With" :access-control-max-age="86400" :access-control-allow-methods "OPTIONS, POST" :content-type="application/json" :connection "keep-alive" :pragma "no-cache" :cache-control "no-store, no-cache, must-revalidate") :status 204))
+
+
+(defroute (:options "/upload-chunked/SESSION/([0-9]+)") (req res)
+  (send-response res :headers '(:access-control-allow-origin "*" :access-control-allow-headers "X-Accept-Charset, X-Accept, Accept, Accept-Encoding, Authorization, Content-Type, Dnt, Origin, User-Agent, X-Requested-With" :access-control-max-age="86400" :access-control-allow-methods "OPTIONS, POST" :content-type="application/json" :connection "keep-alive" :pragma "no-cache" :cache-control "no-store, no-cache, must-revalidate" :transfer-encoding "chunked") :status 204))
+
+
+;; Content-Type: text/html; charset=utf-8
+;; Access-Control-Allow-Origin: http://localhost:8080
+;; Vary: Origin
+;; Access-Control-Allow-Headers: accept, accept-encoding, authorization, content-type, dnt, origin, user-agent, x-csrftoken, x-requested-with
+;; Access-Control-Allow-Methods: DELETE, GET, OPTIONS, PATCH, POST, PUT
+;; Access-Control-Max-Age: 86400
+
+
 ;; Web worker will call this for each file upload
-(defroute (:post "/prepare-upload") (req res)
+(defroute (:post "/prepare-upload/") (req res)
   ;; prepare a session for an incoming upload
   ;;
   (let ((body-bytes (request-body req)))
     (let ((req-data (if body-bytes (yason:parse (babel:octets-to-string body-bytes :encoding :utf-8)))))
       (if req-data
           ;; TODO test for proper json fields, etc.
-          (let ((session-id (gensym "SESSION-"))
+          (let ((session-id (intern (string (gensym "SESSION-"))))
                 (response-data (make-hash-table)))
             (setf (gethash session-id *upload-sessions*)
-                  (make-instance 'upload-session :content-file (make-instance 'content-file :file-meta req-data)))
-            (setf (gethash "id" response-data) (string session-id))
+                  ;; TODO sanitize file-meta
+                  (make-instance 'upload-session :content-file (make-instance 'content-file :tmp-file-location (merge-pathnames config:*tmp-location* (pathname (gethash "filename" req-data))) :file-meta req-data)))
+
+            (setf (gethash "id" response-data) (subseq (string session-id) 8))
             (send-json-response res :body response-data))
 
           (send-json-response res :body (plist-hash-table '("error" "invalid-json" "message" "Invalid JSON"))
             :other (:status 400))))))
     ;; TODO check if req-data is JSON
 
-(defroute (:post "/upload-chunked/(SESSION-[0-9]+)" :chunk t :suppress-100 t) (req res args)
-  ;; TODO before route: verify permission for this session id
-
-
-  (let* ((session-id (car args))
-         (session    (gethash session-id *upload-sessions*)))
-    (unless session
-      (let ((error-response-data (make-hash-table)))
-        (setf (gethash 'message error-response-data) "Upload session expired or does not exist")
-        (setf (gethash 'error error-response-data) "no-session")
-        (send-json-response res :body error-response-data)))
-
+(defroute (:post "/upload-chunked/SESSION/([0-9]+)" :chunk t :suppress-100 t) (req res args)
+  ;; TODO before route: verify permission for this psession id
+  (let* ((session-id (concatenate 'string "SESSION-" (car args)))
+         (session    (gethash (intern session-id) *upload-sessions*)))
+    (if session
     ;; when we receive a Expect: 100-continue header, send back the please continue header after receiving a file upload session
-    (when (string= (gethash "expect" (request-headers req))
-                   "100-continue")
-      ;; TODO error handling
-      ;;(if bucket-id nil (raise-no-buckets))
-      (send-100-continue res))
-
-    (with-upload-session session
-      (let ((bucket (make-instance 'file-bucket)))
-        (send-json-response res :body (serialize (upload-content bucket session nil
-          (lambda (handle)
+    (progn
+      (when (string= (gethash "transfer-encoding" (request-headers req))
+                     "chunked")
+        ;; TODO error handling
+        ;;(if bucket-id nil (raise-no-buckets))
+        (pprint "100-continue")
+        (send-100-continue res))
+      (let ((bucket (get-bucket session (ptr (info (content-file session))))))
+        (upload-content
+         bucket session
+         (lambda (handle finish-upload)
            ;; upload file to bucket location chunk by chunk
-            (with-chunking req (chunk last-chunk-p)
-              (write-sequence chunk handle)
-              (force-output handle)
+           (format t "handling upload...")
+           (with-chunking req (chunk last-chunk-p)
+             (write-sequence chunk handle)
+             (force-output handle)
 
-              (when last-chunk-p
-                ;; clear the session once finished
-                (remhash session-id *upload-sessions*)))))))))))
+             (when last-chunk-p
+               ;; clear the session once finished
+               (format t "completed chunked upload, finishing...")
+               (send-json-response res :body (funcall finish-upload handle))
+               (delete-ptr session)
+               (remhash session-id *upload-sessions*)))))))
+
+    (send-json-response res :body (plist-hash-table '("error" "no-session" "message" "Upload session expired or does not exist"))))))
 
 
 (defun run-dev-server ()
@@ -88,6 +106,7 @@
   (let ((blackbird:*debug-on-error* t)
         (wookie-config:*debug-on-error* t))
 
+    (ensure-directories-exist config:*tmp-location*)
     (as:with-event-loop
         ()
       ;; create a listener, and pass it to start-server, starting Wookie

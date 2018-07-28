@@ -1,6 +1,6 @@
 (defpackage :cffi-utils
   (:use :common-lisp :cffi :alexandria)
-  (:export #:defcmethod #:it #:self))
+  (:export #:defcclass #:defcmethod #:it #:self #:dynamic-c-array-type))
 
 (in-package :cffi-utils)
 
@@ -15,18 +15,22 @@
     `(defcfun ,cfun-name ,return-type ,@(if ptr '((pointer :pointer)) '()) ,@parameters)))
 
 
-(defmacro defcstruct (name c-name)
+(defmacro dynamic-c-array-type (val &optional val-length)
+  `(list :array :string (or ,val-length ,`(length ,val))))
+
+(defmacro defcclass (name c-name)
   (setf (gethash name *c-class-structs*) c-name))
 
 (defmacro defcmethod (class c-method method-name return-type &optional has-ptr parameters &body body)
-  (let* ((cffi-method-name (gensym))
+  (let* ((cffi-method-name (gensym c-method))
          (c-struct-name    (gethash class *c-class-structs*)))
     `(progn
        (cffi-defun (,c-method ,cffi-method-name) ,return-type ,c-struct-name ,has-ptr
                    ,@(when (listp parameters) parameters))
-       (defmethod ,method-name ((self ,class) &rest parameters)
+       (defmethod ,method-name ((self ,class) &rest method-parameters)
+         (format t "~a ~a ~%" ,(string cffi-method-name) method-parameters)
          ,(if (> (length body) 0)
-             `(let ((it (apply ',cffi-method-name parameters)))
-               ,@body)
-             `(apply ',cffi-method-name parameters)
-             )))))
+              `(let ((it (apply ',cffi-method-name ,@(when has-ptr `((slot-value self ',has-ptr))) method-parameters)))
+                 (declare (ignorable it))
+                 ,@body)
+              `(apply ',cffi-method-name ,@(when has-ptr `((slot-value self ',has-ptr))) method-parameters))))))
