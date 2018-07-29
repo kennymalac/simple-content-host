@@ -1,6 +1,6 @@
 (defpackage :filebucket
   (:use :common-lisp :cffi :alexandria :cffi-utils)
-  (:export #:with-upload-session #:content-file #:file-bucket #:get-bucket #:file-upload-info #:upload-session #:upload-content #:serialize #:delete-ptr #:ptr #:info))
+  (:export #:with-upload-session #:content-file #:file-bucket #:get-bucket #:file-upload-info #:upload-session #:in-progress #:upload-content #:serialize #:delete-ptr #:ptr #:info))
 
 (in-package :filebucket)
 
@@ -15,6 +15,7 @@
   ((id :reader id :initarg :id)
    (ptr :accessor ptr :initarg :ptr)
    (bucket :accessor bucket :initarg :bucket :initform nil)
+   (in-progress :accessor in-progress :initform nil)
    (content-file :accessor content-file :initarg :content-file)))
 
 (defmacro with-upload-session (session &body body)

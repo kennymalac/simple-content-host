@@ -4,7 +4,7 @@
   :description "An HTTP interface for TinyCDN"
   :defsystem-depends-on ("cffi-grovel")
   :version "0.0.1"
-  :depends-on (#:cl-async #:cffi #:wookie #:alexandria #:yason #:babel)
+  :depends-on (#:cl-async #:cffi #:wookie #:alexandria #:yason #:babel #:vom)
   :components
   ;; (:file "package")
   ((:module "program"

@@ -24,11 +24,14 @@
 ;; example:
 ;; chunk a7sDSX230smu -> chunk 30AcmyuSdnart23 -> chunk sm9RAR90s9lSe -> (single file)
 
+(defun json-body (body &optional (stream (make-string-output-stream)))
+  (yason:encode body stream)
+  stream)
+
 (defmacro send-json-response (res &key headers body other)
-  `(let ((s (make-string-output-stream)))
-     (yason:encode ,body s)
+  `(let ((output (get-output-stream-string (json-body ,body))))
      (send-response ,res :headers (append ,headers '(:access-control-allow-origin "*" :content-type "application/json"))
-                    :body (get-output-stream-string s)
+                    :body output
                     ,@other)))
 
 (defroute (:options "/prepare-upload/") (req res)
@@ -69,19 +72,24 @@
     ;; TODO check if req-data is JSON
 
 (defroute (:post "/upload-chunked/SESSION/([0-9]+)" :chunk t :suppress-100 t) (req res args)
+  (setf (request-store-body req) nil)
   ;; TODO before route: verify permission for this psession id
   (let* ((session-id (concatenate 'string "SESSION-" (car args)))
          (session    (gethash (intern session-id) *upload-sessions*)))
-    (if session
+    (if (and session (not (in-progress session)))
     ;; when we receive a Expect: 100-continue header, send back the please continue header after receiving a file upload session
     (progn
-      (when (string= (gethash "transfer-encoding" (request-headers req))
-                     "chunked")
-        ;; TODO error handling
-        ;;(if bucket-id nil (raise-no-buckets))
-        (pprint "100-continue")
-        (send-100-continue res))
+      ;; (when (string= (gethash "transfer-encoding" (request-headers req))
+      ;;                "chunked")
+      ;;   ;; TODO error handling
+      ;;   ;;(if bucket-id nil (raise-no-buckets))
+      ;;   (pprint "100-continue")
+      ;;   (send-100-continue res))
+      (setf (in-progress session) t)
+
       (let ((bucket (get-bucket session (ptr (info (content-file session))))))
+        ;; TODO streaming with XHR
+        ;; (if token (token upload-session))
         (upload-content
          bucket session
          (lambda (handle finish-upload)
@@ -96,31 +104,41 @@
                (format t "completed chunked upload, finishing...")
                (send-json-response res :body (funcall finish-upload handle))
                (delete-ptr session)
-               (remhash session-id *upload-sessions*)))))))
+               (remhash (intern session-id) *upload-sessions*)))))))
 
-    (send-json-response res :body (plist-hash-table '("error" "no-session" "message" "Upload session expired or does not exist"))))))
+    (progn
+      (send-json-response
+       res
+       :body (plist-hash-table '("error" "no-session" "message" "Upload session expired or does not exist"))
+       :headers '(:content-type "text/json") :other (:status 400)))
+      )))
 
 
 (defun run-dev-server ()
   ;; ;; Development configuration
-  (let ((blackbird:*debug-on-error* t)
-        (wookie-config:*debug-on-error* t))
+  (let ((blackbird:*debug-on-error* nil)
+        (wookie-config:*debug-on-error* nil))
 
     (ensure-directories-exist config:*tmp-location*)
+
+    ;; Tried to handle this error, but it doesn't work
+    (handler-bind
+        ((fast-http.error:invalid-method #'(lambda (c))))
     (as:with-event-loop
-        ()
-      ;; create a listener, and pass it to start-server, starting Wookie
-      (let* ((listener (make-instance 'listener
-                                      :bind config:*hostname*
-                                      :port config:*port*))
-             ;; start the http server (this passes back a cl-async server class)
-             (server (start-server listener)))
-        ;; stop server on ctrl+c
-        (as:signal-handler
-         2
-         (lambda (sig)
-           (declare (ignore sig))
-           ;; remove the signal handler to end the event loop
-           (as:free-signal-handler 2)
-           ;; graceful stop
-           (as:close-tcp-server server)))))))
+          ()
+        (vom:config :wookie :debug1)
+        ;; create a listener, and pass it to start-server, starting Wookie
+        (let* ((listener (make-instance 'listener
+                                        :bind config:*hostname*
+                                        :port config:*port*))
+               ;; start the http server (this passes back a cl-async server class)
+               (server (start-server listener)))
+          ;; stop server on ctrl+c
+          (as:signal-handler
+           2
+           (lambda (sig)
+             (declare (ignore sig))
+             ;; remove the signal handler to end the event loop
+             (as:free-signal-handler 2)
+             ;; graceful stop
+             (as:close-tcp-server server))))))))
