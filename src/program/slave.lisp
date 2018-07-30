@@ -1,5 +1,5 @@
 (defpackage :slave
-  (:use :common-lisp :cffi :alexandria :filebucket :blackbird :wookie :wookie-plugin-export)
+  (:use :common-lisp :cffi :cl-ppcre :alexandria :filebucket :blackbird :wookie :wookie-plugin-export)
   (:export #:run-dev-server))
 
 (in-package :slave)
@@ -50,6 +50,23 @@
 ;; Access-Control-Max-Age: 86400
 
 
+(add-hook :pre-route
+  (lambda (req res)
+    (when (search "/upload-chunked/SESSION" (request-resource req))
+      (cl-ppcre:register-groups-bind (session-id)
+          ("/upload-chunked/SESSION/([0-9]+)" (request-resource req))
+        (let ((session (gethash (intern (concatenate 'string "SESSION-" session-id)) *upload-sessions*)))
+          (if (and session (not (in-progress session)))
+            (progn
+              (format t "PRE-ROUTE session: ~a~%" session)
+              (setf (request-data req) session))
+            (progn
+              (send-json-response
+               res
+               :body (plist-hash-table '("error" "no-session" "message" "Upload session expired or does not exist"))
+               :headers '(:content-type "text/json") :other (:status 400 :close t))
+              (make-instance 'error))))))))
+
 ;; Web worker will call this for each file upload
 (defroute (:post "/prepare-upload/") (req res)
   ;; prepare a session for an incoming upload
@@ -72,27 +89,30 @@
     ;; TODO check if req-data is JSON
 
 (defroute (:post "/upload-chunked/SESSION/([0-9]+)" :chunk t :suppress-100 t) (req res args)
-
-  (add-hook :pre-route
-    (lambda (req res)
-      (with-promise (resolve reject)
-        (let* ((session-id (concatenate 'string "SESSION-" (car args)))
-               (session (gethash (intern session-id) *upload-sessions*)))
-          (if (and session (not (in-progress session)))
-              (progn
-                (setf (request-data req) session)
-                (resolve))
-              (progn
-                (send-json-response
-                 res
-                 :body (plist-hash-table '("error" "no-session" "message" "Upload session expired or does not exist"))
-                 :headers '(:content-type "text/json") :other (:status 400))
-                (reject (make-instance 'error))
-                     ))))))
-
-  (setf (request-store-body req) nil)
   ;; TODO before route: verify permission for this psession id
   (let ((session (request-data req)))
+    (when session
+      (format t "SESSION: ~a ~%" session)
+      (setf (in-progress session) t)
+
+      (let ((bucket (get-bucket session (ptr (info (content-file session))))))
+        ;; TODO streaming with XHR
+        ;; (if token (token upload-session))
+        (upload-content
+         bucket session
+         (lambda (handle finish-upload)
+           ;; upload file to bucket location chunk by chunk
+           (format t "handling upload...")
+           (with-chunking req (chunk last-chunk-p)
+             (write-sequence chunk handle)
+             (force-output handle)
+
+             (when last-chunk-p
+               ;; clear the session once finished
+               (format t "completed chunked upload, finishing...")
+               (send-json-response res :body (funcall finish-upload handle))
+               (delete-ptr session)
+               (remhash (intern (car args)) *upload-sessions*)))))))))
     ;; when we receive a Expect: 100-continue header, send back the please continue header after receiving a file upload session
     ;; (when (string= (gethash "transfer-encoding" (request-headers req))
     ;;                "chunked")
@@ -100,32 +120,11 @@
     ;;   ;;(if bucket-id nil (raise-no-buckets))
     ;;   (pprint "100-continue")
     ;;   (send-100-continue res))
-    (setf (in-progress session) t)
-
-    (let ((bucket (get-bucket session (ptr (info (content-file session))))))
-      ;; TODO streaming with XHR
-      ;; (if token (token upload-session))
-      (upload-content
-       bucket session
-       (lambda (handle finish-upload)
-         ;; upload file to bucket location chunk by chunk
-         (format t "handling upload...")
-         (with-chunking req (chunk last-chunk-p)
-           (write-sequence chunk handle)
-           (force-output handle)
-
-           (when last-chunk-p
-             ;; clear the session once finished
-             (format t "completed chunked upload, finishing...")
-             (send-json-response res :body (funcall finish-upload handle))
-             (delete-ptr session)
-             (remhash (slot-value session 'id) *upload-sessions*))))))))
-
 
 (defun run-dev-server ()
   ;; ;; Development configuration
-  (let ((blackbird:*debug-on-error* nil)
-        (wookie-config:*debug-on-error* nil))
+  (let ((blackbird:*debug-on-error* t)
+        (wookie-config:*debug-on-error* t))
 
     (ensure-directories-exist config:*tmp-location*)
 
