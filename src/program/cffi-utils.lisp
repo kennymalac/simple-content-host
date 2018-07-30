@@ -38,7 +38,7 @@
        (declare (ignore ,c-class-name))
        (declare (ignore ,params))
        (unwind-protect-foreign-class ,instance
-         (setf ,instance (apply 'make-instance (append '(,c-class-name) ,params))))
+         (setf ,instance (apply 'make-instance ',c-class-name ,params)))
        ,@body)))
 
 (defmacro defcclass (name c-name)
