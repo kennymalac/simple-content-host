@@ -19,7 +19,7 @@
 
 
 (defgeneric ptr (self))
-(defgeneric (setf ptr) (ptr foo))
+(defgeneric (setf ptr) (ptr new-value))
 (defgeneric new (self &rest method-parameters))
 (defgeneric delete-ptr (self &rest method-parameters))
 
