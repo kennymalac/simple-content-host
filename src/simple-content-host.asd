@@ -6,8 +6,10 @@
   :version "0.0.1"
   :depends-on (#:cl-async #:cffi #:wookie #:alexandria #:yason #:babel #:vom)
   :components
-  ;; (:file "package")
-  ((:module "program"
+  ((:module "vendor"
+            :components ((:file "base32-crockford")))
+   (:module "program"
+            :depends-on ("vendor")
             :components (
                          (:file "config")
                          (:file "cffi-utils" :depends-on ("config"))

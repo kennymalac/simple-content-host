@@ -1,23 +1,11 @@
 (defpackage :slave
-  (:use :common-lisp :cffi :cl-ppcre :alexandria :filebucket :blackbird :wookie :wookie-plugin-export)
+  (:use :common-lisp :cffi :cl-ppcre :alexandria :filebucket :blackbird :wookie :wookie-plugin-export :cffi-utils)
   (:export #:run-dev-server))
 
 (in-package :slave)
 
 ;; loads Wookie core plugins
 (load-plugins)
-
-;; directory route for assets (dev-mode)
-;;(def-directory-route "/" "./assets")
-
-;; (defun write-file-chunk (out-buffer chunk)
-;;   ;; write chunk to file
-;;   )
-
-;; (add-hook
-;;  :parsed-headers
-;;  (lambda (request)
-;;    (setf (http-parse:http-store-body (request-http request)) t)))
 
 (defparameter *upload-sessions* (make-hash-table))
 ;; assemble chunks
@@ -95,6 +83,9 @@
       (format t "SESSION: ~a ~%" session)
       (setf (in-progress session) t)
 
+      ;; TODO when we receive a Expect: 100-continue header, send back the please continue header after receiving a file upload session
+      ;; (when (string= (gethash "transfer-encoding" (request-headers req))
+      ;;                "chunked")
       (let ((bucket (get-bucket session (ptr (info (content-file session))))))
         ;; TODO streaming with XHR
         ;; (if token (token upload-session))
@@ -113,13 +104,14 @@
                (send-json-response res :body (funcall finish-upload handle))
                (delete-ptr session)
                (remhash (intern (car args)) *upload-sessions*)))))))))
-    ;; when we receive a Expect: 100-continue header, send back the please continue header after receiving a file upload session
-    ;; (when (string= (gethash "transfer-encoding" (request-headers req))
-    ;;                "chunked")
-    ;;   ;; TODO error handling
-    ;;   ;;(if bucket-id nil (raise-no-buckets))
-    ;;   (pprint "100-continue")
-    ;;   (send-100-continue res))
+
+;;               base 32 id          base 32 id        filename
+(defroute (:get "/([0-9A-Z\*\~\$=])+/([0-9A-Z\*\~\$=])/([a-zA-Z0-9\s\._-])") (req res args)
+  (destructuring-bind (bucket-id content-id filename) args
+    (with-foreign-class (hosting-session (:id (gensym "HSESSION-")
+                                          :in-progress t))
+                        session
+      (pprint "hi"))))
 
 (defun run-dev-server ()
   ;; ;; Development configuration

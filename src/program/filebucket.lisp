@@ -1,6 +1,6 @@
 (defpackage :filebucket
   (:use :common-lisp :cffi :alexandria :cffi-utils)
-  (:export #:with-upload-session #:content-file #:file-bucket #:get-bucket #:file-upload-info #:upload-session #:in-progress #:upload-content #:serialize #:delete-ptr #:ptr #:info))
+  (:export #:content-file #:file-bucket #:get-bucket #:file-upload-info #:hosting-session #:upload-session #:in-progress #:upload-content #:serialize #:delete-ptr #:ptr #:info))
 
 (in-package :filebucket)
 
@@ -9,7 +9,17 @@
 
 (use-foreign-library libtinycdn)
 
-(defgeneric ptr (self))
+(defclass hosting-session ()
+  ((id :reader id :initarg :id)
+   (ptr :accessor ptr :initarg :ptr)
+   (bucket :accessor bucket :initarg :bucket :initform nil)
+   (in-progress :accessor in-progress :initarg in-progress :initform nil)
+   (content-file :accessor content-file :initform nil :initarg :content-file)))
+
+(defcclass hosting-session "FileHostingSession")
+(defcmethod hosting-session "new" new :pointer)
+(defcmethod hosting-session "delete" delete-ptr :void ptr ()
+  (setf (ptr self) nil))
 
 (defclass upload-session ()
   ((id :reader id :initarg :id)
@@ -17,11 +27,6 @@
    (bucket :accessor bucket :initarg :bucket :initform nil)
    (in-progress :accessor in-progress :initform nil)
    (content-file :accessor content-file :initarg :content-file)))
-
-(defmacro with-upload-session (session &body body)
-  `(unwind-protect
-        (progn ,@body)
-     (delete-ptr ,session)))
 
 (defcclass upload-session "FileUploadingSession")
 (defcmethod upload-session "new" new :pointer)

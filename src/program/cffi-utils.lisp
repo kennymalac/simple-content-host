@@ -1,12 +1,11 @@
 (defpackage :cffi-utils
   (:use :common-lisp :cffi :alexandria)
-  (:export #:defcclass #:defcmethod #:it #:self #:dynamic-c-array-type))
+  (:export #:unwind-protect-foreign-class #:with-foreign-class #:defcclass #:defcmethod #:it #:self #:ptr #:delete-ptr #:new #:dynamic-c-array-type))
 
 (in-package :cffi-utils)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter *c-class-structs* (make-hash-table)))
-
 
 (defmacro cffi-defun (method return-type &optional cffi-struct-name ptr &rest parameters)
   (let ((cfun-name (if cffi-struct-name
@@ -17,6 +16,30 @@
 
 (defmacro dynamic-c-array-type (val &optional val-length)
   `(list :array :string (or ,val-length ,`(length ,val))))
+
+
+(defgeneric ptr (self))
+(defgeneric (setf ptr) (ptr foo))
+(defgeneric new (self &rest method-parameters))
+(defgeneric delete-ptr (self &rest method-parameters))
+
+(defmacro unwind-protect-foreign-class (instance &body body)
+  `(unwind-protect
+        (progn ,@body)
+     (when ,instance
+       (delete-ptr ,instance))))
+
+(defmacro with-foreign-class (spec instance &body body)
+  (with-gensyms (c-class-name params)
+    `(let ((,c-class-name ',(car spec))
+           (,params       ',(second spec))
+           (,instance      nil))
+       ;;    (let ((instance (gensym)))
+       (declare (ignore ,c-class-name))
+       (declare (ignore ,params))
+       (unwind-protect-foreign-class ,instance
+         (setf ,instance (apply 'make-instance (append '(,c-class-name) ,params))))
+       ,@body)))
 
 (defmacro defcclass (name c-name)
   (setf (gethash name *c-class-structs*) c-name))
