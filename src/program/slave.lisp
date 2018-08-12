@@ -67,7 +67,7 @@
                 (response-data (make-hash-table)))
             (setf (gethash session-id *upload-sessions*)
                   ;; TODO sanitize file-meta
-                  (make-instance 'upload-session :id session-id :content-file (make-instance 'content-file :tmp-file-location (merge-pathnames config:*tmp-location* (pathname (gethash "filename" req-data))) :file-meta req-data)))
+                  (make-instance 'upload-session :id session-id :content-file (make-instance 'uploaded-content-file :tmp-file-location (merge-pathnames config:*tmp-location* (pathname (gethash "filename" req-data))) :file-meta req-data)))
 
             (setf (gethash "id" response-data) (subseq (string session-id) 8))
             (send-json-response res :body response-data))
@@ -86,7 +86,7 @@
       ;; TODO when we receive a Expect: 100-continue header, send back the please continue header after receiving a file upload session
       ;; (when (string= (gethash "transfer-encoding" (request-headers req))
       ;;                "chunked")
-      (let ((bucket (get-bucket session (ptr (info (content-file session))))))
+      (let ((bucket (fetch-bucket session (ptr (info (content-file session))))))
         ;; TODO streaming with XHR
         ;; (if token (token upload-session))
         (upload-content
@@ -105,13 +105,29 @@
                (delete-ptr session)
                (remhash (intern (car args)) *upload-sessions*)))))))))
 
+;;               bucket id           file id
 ;;               base 32 id          base 32 id        filename
-(defroute (:get "/([0-9A-Z\*\~\$=])+/([0-9A-Z\*\~\$=])/([a-zA-Z0-9\s\._-])") (req res args)
+(defroute (:get "/([0-9A-Z\*\~\$=]+)/([0-9A-Z\*\~\$=]+)/([a-zA-Z0-9\s\._-]+)") (req res args)
   (destructuring-bind (bucket-id content-id filename) args
-    (with-foreign-class (hosting-session (:id (gensym "HSESSION-")
-                                          :in-progress t))
-                        session
-      (pprint "hi"))))
+    (with-foreign-class (hosting-session
+                         :id (gensym "HSESSION-")
+                         :in-progress t
+                         :content-file (make-instance 'hosted-content-file :id (b32c:b32c-decode content-id) :file-name filename))
+      session
+      ;; TODO correct MIME types
+      (let ((bucket (get-bucket session (b32c:b32c-decode bucket-id))))
+        (if (or (eql (bucket-id bucket) -1)
+                (not (eql (get-content-file session (ptr (info (content-file session)))) 1)))
+          (send-response res :status 400 :body "Invalid bucket or file")
+          (let ((stream (start-response res :headers '(:content-type "image/jpg"))))
+            (host-content
+             bucket session
+             (lambda (chunk)
+               ;; Begin chunking procedure here
+               (format t "Writing chunk!~%~%")
+               (write-sequence chunk stream)
+               (format t "Wrote chunk!~%")))
+            (finish-response res)))))))
 
 (defun run-dev-server ()
   ;; ;; Development configuration

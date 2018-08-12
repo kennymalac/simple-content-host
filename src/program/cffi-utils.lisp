@@ -29,16 +29,10 @@
      (when ,instance
        (delete-ptr ,instance))))
 
-(defmacro with-foreign-class (spec instance &body body)
-  (with-gensyms (c-class-name params)
-    `(let ((,c-class-name ',(car spec))
-           (,params       ',(second spec))
-           (,instance      nil))
-       ;;    (let ((instance (gensym)))
-       (declare (ignore ,c-class-name))
-       (declare (ignore ,params))
-       (unwind-protect-foreign-class ,instance
-         (setf ,instance (apply 'make-instance ',c-class-name ,params)))
+(defmacro with-foreign-class ((class-name &rest params) instance &body body)
+  `(let ((,instance nil))
+     (unwind-protect-foreign-class ,instance
+       (setf ,instance (make-instance ',class-name ,@params))
        ,@body)))
 
 (defmacro defcclass (name c-name)
