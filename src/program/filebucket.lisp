@@ -1,6 +1,6 @@
 (defpackage :filebucket
   (:use :common-lisp :cffi :alexandria :cffi-utils)
-  (:export #:content-file #:uploaded-content-file #:hosted-content-file #:file-bucket #:fetch-bucket #:bucket-id #:get-bucket #:file-upload-info #:hosting-session #:upload-session #:in-progress #:upload-content #:host-content #:delete-ptr #:ptr #:info #:get-content-file))
+  (:export #:content-file #:file-meta #:uploaded-content-file #:hosted-content-file #:file-bucket #:fetch-bucket #:bucket-id #:get-bucket #:file-upload-info #:hosting-session #:upload-session #:in-progress #:upload-content #:host-content #:delete-ptr #:ptr #:info #:get-content-file))
 
 (in-package :filebucket)
 
@@ -57,7 +57,10 @@
   (setf (ptr self) nil))
 (defcmethod hosting-session "getBucket" get-bucket :int ptr ((id :int))
   (setf (bucket self) (make-instance 'file-bucket :id it)))
-(defcmethod hosting-session "getContentFile" get-content-file :int ptr ((hosted-file-info :pointer)))
+(defcmethod hosting-session "getContentFile" get-content-file :int ptr ((hosted-file-info :pointer))
+  (setf (gethash "type" (file-meta (content-file self)))
+        (trivial-mimes:mime (parse-namestring (gethash "filename" (file-meta (content-file self))))))
+  it)
 (defcmethod hosting-session "getChunkingHandle" get-chunking-handle :void ptr)
 (defcmethod hosting-session "yieldChunk" yield-chunk :int ptr ((chunk :string)))
 
@@ -85,7 +88,9 @@
    (bucket-id :accessor bucket-id :initform nil :initarg :bucket-id)
 ;;   (is-dirty :accessor is-dirty :initform t)
    (has-uploaded :accessor has-uploaded :initform nil)
-   (file-meta :accessor file-meta :initarg :file-meta :initform (make-hash-table))
+
+   ;; TODO don't use a hash table - lol
+   (file-meta :accessor file-meta :initarg :file-meta :initform (make-hash-table :test 'equal))
    ;;  (chunks :initform '())
    (tmp-file-location :accessor tmp-file-location :initarg :tmp-file-location :initform nil)))
 
@@ -96,8 +101,8 @@
   (setf (info self)
         (make-instance 'file-upload-info
                        :tmp-location (namestring (tmp-file-location self))
-                       :file-type "image/jpeg"
-                       :content-type "image"
+                       :file-type (gethash "type" (file-meta self))
+                       :content-type (gethash "contentType" (file-meta self))
                        :tags (or (gethash "tags" (file-meta self)) #(""))
                        :wants-owned 0)))
 
@@ -109,7 +114,8 @@
         (make-instance 'hosted-file-info
           :id (id self)
           :file-name file-name
-          :owned 0)))
+          :owned 0))
+  (setf (gethash "filename" (file-meta self)) file-name))
 
 ;; (defclass video-file (content-file))
 ;; (defclass audio-file (content-file))

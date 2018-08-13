@@ -67,7 +67,11 @@
                 (response-data (make-hash-table)))
             (setf (gethash session-id *upload-sessions*)
                   ;; TODO sanitize file-meta
-                  (make-instance 'upload-session :id session-id :content-file (make-instance 'uploaded-content-file :tmp-file-location (merge-pathnames config:*tmp-location* (pathname (gethash "filename" req-data))) :file-meta req-data)))
+                  (make-instance 'upload-session
+                    :id session-id
+                    :content-file (make-instance 'uploaded-content-file
+                                    :tmp-file-location (merge-pathnames config:*tmp-location* (pathname (gethash "filename" req-data)))
+                                    :file-meta req-data)))
 
             (setf (gethash "id" response-data) (subseq (string session-id) 8))
             (send-json-response res :body response-data))
@@ -114,20 +118,23 @@
                          :in-progress t
                          :content-file (make-instance 'hosted-content-file :id (b32c:b32c-decode content-id) :file-name filename))
       session
-      ;; TODO correct MIME types
       (let ((bucket (get-bucket session (b32c:b32c-decode bucket-id))))
         (if (or (eql (bucket-id bucket) -1)
                 (not (eql (get-content-file session (ptr (info (content-file session)))) 1)))
-          (send-response res :status 400 :body "Invalid bucket or file")
-          (let ((stream (start-response res :headers '(:content-type "image/jpg"))))
-            (host-content
-             bucket session
-             (lambda (chunk)
-               ;; Begin chunking procedure here
-               (format t "Writing chunk!~%~%")
-               (write-sequence chunk stream)
-               (format t "Wrote chunk!~%")))
-            (finish-response res)))))))
+            (send-response res :status 400 :body "Invalid bucket or file")
+
+            (let* ((res-headers (list :content-type (gethash "type" (file-meta (content-file session)))
+                                      :cache-control "public, max-age=31536000"))
+                   (stream (start-response res :headers res-headers)))
+              ;; TODO make this use promises!!!
+              (host-content
+               bucket session
+               (lambda (chunk)
+                 ;; Begin chunking procedure here
+                 (format t "Writing chunk!~%~%")
+                 (write-sequence chunk stream)
+                 (format t "Wrote chunk!~%")))
+              (finish-response res :close t)))))))
 
 (defun run-dev-server ()
   ;; ;; Development configuration
@@ -148,10 +155,10 @@
                (server (start-server listener)))
           ;; stop server on ctrl+c
           (as:signal-handler
-           2
+           4
            (lambda (sig)
              (declare (ignore sig))
              ;; remove the signal handler to end the event loop
-             (as:free-signal-handler 2)
+             (as:free-signal-handler 4)
              ;; graceful stop
              (as:close-tcp-server server)))))))
