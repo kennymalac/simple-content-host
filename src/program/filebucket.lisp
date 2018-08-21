@@ -98,12 +98,22 @@
   ((info :accessor info :initform nil)))
 
 (defmethod initialize-instance :after ((self uploaded-content-file) &key)
+  (unless (gethash "type" (file-meta self))
+    (setf (gethash "type" (file-meta self))
+          (trivial-mimes:mime (tmp-file-location self))))
+  (unless (gethash "tags" (file-meta self))
+    (setf (gethash "tags" (file-meta self))
+          #("")))
+  (unless (gethash "contentType" (file-meta self))
+    (setf (gethash "contentType" (file-meta self))
+          "image"))
+
   (setf (info self)
         (make-instance 'file-upload-info
                        :tmp-location (namestring (tmp-file-location self))
                        :file-type (gethash "type" (file-meta self))
                        :content-type (gethash "contentType" (file-meta self))
-                       :tags (or (gethash "tags" (file-meta self)) #(""))
+                       :tags (gethash "tags" (file-meta self))
                        :wants-owned 0)))
 
 (defclass hosted-content-file (content-file)
@@ -161,14 +171,20 @@
                    ;; (let ((fb-id          (foreign-string-to-lisp c-fb-id))
                    ;;       (stored-file-id (foreign-string-to-lisp c-stored-file-id)))
                    (format t "FileBucket id: ~a StoredFile id: ~a ~%" fb-id stored-file-id)
-                   (setf (id content) stored-file-id)
-                   (setf (bucket-id content) fb-id)
-                   (setf (bucket-id self) fb-id)))
+                   (setf (id content) (parse-integer stored-file-id))
+                   (setf (bucket-id content) (parse-integer fb-id))
+                   (setf (bucket-id self) (parse-integer fb-id))))
+
+               (format t "bucket-id content ~a bucket-id self ~a id content ~a~%"
+                       (bucket-id content)
+                       (bucket-id self)
+                       (id content))
 
                (setf (has-uploaded content) t)
                (setf (uri content)
-                     (concatenate 'string config:*hostname* (write-to-string config:*port*)
-                                  "/bucket/" (bucket-id self) "/" (id content) "/" (gethash "filename" (file-meta content))))
+                     (concatenate 'string "http://" config:*hostname* ":" (write-to-string config:*port*)
+                                  "/bucket/" (b32c:b32c-encode (bucket-id self)) "/" (b32c:b32c-encode (id content)) "/" (gethash "filename" (file-meta content))))
+               (format t "uri ~a~%" (uri content))
                (uri content)))))
 
 (defmethod host-content ((self file-bucket) (session hosting-session) (process function))

@@ -105,13 +105,13 @@
              (when last-chunk-p
                ;; clear the session once finished
                (format t "completed chunked upload, finishing...")
-               (send-json-response res :body (funcall finish-upload handle))
+               (send-json-response res :body (plist-hash-table (list "url" (funcall finish-upload handle))))
                (delete-ptr session)
                (remhash (intern (car args)) *upload-sessions*)))))))))
 
 ;;               bucket id           file id
 ;;               base 32 id          base 32 id        filename
-(defroute (:get "/([0-9A-Z\*\~\$=]+)/([0-9A-Z\*\~\$=]+)/([a-zA-Z0-9\s\._-]+)") (req res args)
+(defroute (:get "/bucket/([0-9A-Z\*\~\$=]+)/([0-9A-Z\*\~\$=]+)/([a-zA-Z0-9\s\._-]+)") (req res args)
   (destructuring-bind (bucket-id content-id filename) args
     (with-foreign-class (hosting-session
                          :id (gensym "HSESSION-")
